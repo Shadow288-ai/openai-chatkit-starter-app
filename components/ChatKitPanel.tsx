@@ -405,10 +405,19 @@ export function ChatKitPanel({
         currentValue = input.textContent || input.innerText || "";
       }
       
+      // Check if transcript is already in the input to avoid duplicates
+      const transcriptTrimmed = transcript.trim();
+      if (currentValue.includes(transcriptTrimmed)) {
+        if (isDev) {
+          console.log("Transcript already in input, skipping:", transcriptTrimmed);
+        }
+        return;
+      }
+      
       // Append transcript (add space if there's existing text)
       const newValue = currentValue.trim() 
-        ? `${currentValue.trim()} ${transcript.trim()}` 
-        : transcript.trim();
+        ? `${currentValue.trim()} ${transcriptTrimmed}` 
+        : transcriptTrimmed;
       
       // Set the value
       if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {

@@ -81,10 +81,13 @@ export function VoiceInputButton({ onTranscriptUpdate, containerRef }: VoiceInpu
 
   useEffect(() => {
     if (transcript && transcript !== lastTranscriptRef.current) {
-      // Only send new transcript parts (the difference)
-      const newPart = transcript.slice(lastTranscriptRef.current.length).trim();
+      // Get only the new part that was added
+      const lastLength = lastTranscriptRef.current.length;
+      const newPart = transcript.slice(lastLength).trim();
+      
       if (newPart) {
-        console.log("Sending transcript update:", newPart);
+        console.log("Sending transcript update:", newPart, "Full transcript:", transcript);
+        // Send only the new part to avoid duplicates
         onTranscriptUpdate(newPart);
         lastTranscriptRef.current = transcript;
       }
@@ -94,8 +97,10 @@ export function VoiceInputButton({ onTranscriptUpdate, containerRef }: VoiceInpu
   const handleClick = () => {
     if (isListening) {
       stopListening();
+      // Clear the last transcript reference when stopping
       lastTranscriptRef.current = "";
     } else {
+      // Clear the last transcript reference when starting
       lastTranscriptRef.current = "";
       startListening();
     }

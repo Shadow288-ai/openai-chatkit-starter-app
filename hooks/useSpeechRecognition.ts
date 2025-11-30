@@ -66,22 +66,26 @@ export function useSpeechRecognition() {
     recognition.lang = "en-US";
 
     recognition.addEventListener("result", (event: SpeechRecognitionEvent) => {
-      let interimTranscript = "";
       let finalTranscript = "";
+      let hasFinalResults = false;
 
+      // Only process final results to avoid duplicates from interim results
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
+          const transcript = event.results[i][0].transcript;
           finalTranscript += transcript + " ";
-        } else {
-          interimTranscript += transcript;
+          hasFinalResults = true;
         }
       }
 
-      setTranscript((prev) => {
-        const newTranscript = prev + finalTranscript;
-        return newTranscript.trim();
-      });
+      // Only update transcript with final results
+      if (hasFinalResults && finalTranscript.trim()) {
+        setTranscript((prev) => {
+          // Append only the new final transcript part
+          const newTranscript = (prev + " " + finalTranscript).trim();
+          return newTranscript;
+        });
+      }
     });
 
     recognition.addEventListener("error", (event: SpeechRecognitionErrorEvent) => {
@@ -204,6 +208,7 @@ export function useSpeechRecognition() {
     }
     setIsListening(false);
     isStartingRef.current = false;
+    // Don't clear transcript here - keep it so it can be sent to input
   };
 
   const clearTranscript = () => {
