@@ -11,6 +11,7 @@ import {
   getThemeConfig,
 } from "@/lib/config";
 import { ErrorOverlay } from "./ErrorOverlay";
+import { VoiceInputButton } from "./VoiceInputButton";
 import type { ColorScheme } from "@/hooks/useColorScheme";
 
 export type FactAction = {
@@ -61,6 +62,7 @@ export function ChatKitPanel({
       : "pending"
   );
   const [widgetInstanceKey, setWidgetInstanceKey] = useState(0);
+  const chatKitContainerRef = useRef<HTMLDivElement>(null);
 
   const setErrorState = useCallback((updates: Partial<ErrorState>) => {
     setErrors((current) => ({ ...current, ...updates }));
@@ -333,6 +335,88 @@ export function ChatKitPanel({
   const activeError = errors.session ?? errors.integration;
   const blockingError = errors.script ?? activeError;
 
+  const handleTranscriptUpdate = useCallback((transcript: string) => {
+    if (!isBrowser || !chatKitContainerRef.current || !transcript.trim()) {
+      return;
+    }
+
+    // Find the ChatKit input field
+    // The ChatKit component uses a web component, so we need to query for the input
+    const chatKitElement = chatKitContainerRef.current.querySelector("openai-chatkit");
+    if (!chatKitElement) {
+      return;
+    }
+
+    // Try to find input in shadow DOM or regular DOM
+    let input: HTMLInputElement | HTMLTextAreaElement | null = null;
+
+    // First, try to find in shadow DOM
+    if (chatKitElement.shadowRoot) {
+      input = chatKitElement.shadowRoot.querySelector(
+        'textarea[placeholder], input[type="text"], textarea'
+      ) as HTMLTextAreaElement | HTMLInputElement | null;
+    }
+
+    // If not found in shadow DOM, try regular DOM
+    if (!input) {
+      input = chatKitElement.querySelector(
+        'textarea[placeholder], input[type="text"], textarea'
+      ) as HTMLTextAreaElement | HTMLInputElement | null;
+    }
+
+    // Also try common selectors for chat input fields
+    if (!input) {
+      const selectors = [
+        'textarea[aria-label*="message" i]',
+        'textarea[aria-label*="input" i]',
+        'textarea[aria-label*="chat" i]',
+        'input[aria-label*="message" i]',
+        'input[aria-label*="input" i]',
+        'input[aria-label*="chat" i]',
+        '[contenteditable="true"]',
+      ];
+
+      for (const selector of selectors) {
+        if (chatKitElement.shadowRoot) {
+          input = chatKitElement.shadowRoot.querySelector(selector) as HTMLTextAreaElement | HTMLInputElement | null;
+          if (input) break;
+        }
+        input = chatKitElement.querySelector(selector) as HTMLTextAreaElement | HTMLInputElement | null;
+        if (input) break;
+      }
+    }
+
+    if (input) {
+      // Get current value and append transcript
+      const currentValue = input.value || input.textContent || "";
+      const newValue = currentValue ? `${currentValue} ${transcript}` : transcript;
+      
+      // Set the value
+      if (input.contentEditable === "true") {
+        input.textContent = newValue;
+      } else {
+        input.value = newValue;
+      }
+      
+      // Trigger input events to notify ChatKit
+      const inputEvent = new Event("input", { bubbles: true });
+      const changeEvent = new Event("change", { bubbles: true });
+      
+      input.dispatchEvent(inputEvent);
+      input.dispatchEvent(changeEvent);
+
+      // Focus the input and move cursor to end
+      input.focus();
+      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+        input.setSelectionRange(newValue.length, newValue.length);
+      }
+    } else {
+      if (isDev) {
+        console.warn("Could not find ChatKit input field");
+      }
+    }
+  }, []);
+
   if (isDev) {
     console.debug("[ChatKitPanel] render state", {
       isInitializingSession,
@@ -344,7 +428,10 @@ export function ChatKitPanel({
   }
 
   return (
-    <div className="relative pb-8 flex h-[90vh] w-full rounded-2xl flex-col overflow-hidden bg-white shadow-sm transition-colors dark:bg-slate-900">
+    <div
+      ref={chatKitContainerRef}
+      className="relative pb-8 flex h-[90vh] w-full rounded-2xl flex-col overflow-hidden bg-white shadow-sm transition-colors dark:bg-slate-900"
+    >
       <ChatKit
         key={widgetInstanceKey}
         control={chatkit.control}
@@ -354,6 +441,9 @@ export function ChatKitPanel({
             : "block h-full w-full"
         }
       />
+      {!blockingError && !isInitializingSession && (
+        <VoiceInputButton onTranscriptUpdate={handleTranscriptUpdate} />
+      )}
       <ErrorOverlay
         error={blockingError}
         fallbackMessage={
