@@ -455,7 +455,7 @@ export function ChatKitPanel({
       if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
         try {
           input.setSelectionRange(newValue.length, newValue.length);
-        } catch (e) {
+        } catch {
           // Some inputs don't support setSelectionRange
         }
       } else if (input.contentEditable === "true") {
