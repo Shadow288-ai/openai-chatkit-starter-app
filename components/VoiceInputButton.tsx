@@ -5,7 +5,7 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 interface VoiceInputButtonProps {
   onTranscriptUpdate: (transcript: string) => void;
-  containerRef?: React.RefObject<HTMLDivElement | null>;
+  containerRef?: React.RefObject<HTMLDivElement>;
 }
 
 export function VoiceInputButton({ onTranscriptUpdate, containerRef }: VoiceInputButtonProps) {
