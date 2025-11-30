@@ -44,6 +44,11 @@ export function useSpeechRecognition() {
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const isStartingRef = useRef(false);
+  
+  // Check support synchronously
+  const isSupported = typeof window !== "undefined" && 
+    (window.SpeechRecognition !== undefined || window.webkitSpeechRecognition !== undefined);
 
   useEffect(() => {
     // Check if browser supports speech recognition
@@ -80,13 +85,36 @@ export function useSpeechRecognition() {
     });
 
     recognition.addEventListener("error", (event: SpeechRecognitionErrorEvent) => {
+      const errorType = String(event.error).toLowerCase();
+      
+      // "aborted" error is often not a real error - it happens when recognition is stopped
+      // before it fully starts, or when restarting quickly. Never show this as an error.
+      if (errorType === "aborted" || errorType.includes("aborted")) {
+        // Silently handle aborted errors - just reset state
+        setIsListening(false);
+        isStartingRef.current = false;
+        setError(null); // Clear any existing error
+        return;
+      }
+      
+      // Also ignore these harmless errors
+      if (errorType === "no-speech" || errorType === "audio-capture") {
+        setIsListening(false);
+        isStartingRef.current = false;
+        setError(null); // Clear any existing error
+        return;
+      }
+      
+      // For other errors, show them but don't block future attempts
       console.error("Speech recognition error:", event.error);
       setError(`Speech recognition error: ${event.error}`);
       setIsListening(false);
+      isStartingRef.current = false;
     });
 
     recognition.addEventListener("end", () => {
       setIsListening(false);
+      isStartingRef.current = false;
     });
 
     recognitionRef.current = recognition;
@@ -104,23 +132,78 @@ export function useSpeechRecognition() {
       return;
     }
 
-    setTranscript("");
-    setError(null);
-    setIsListening(true);
-    try {
-      recognitionRef.current.start();
-    } catch (err) {
-      console.error("Failed to start speech recognition:", err);
-      setError("Failed to start speech recognition");
-      setIsListening(false);
+    // Prevent multiple simultaneous starts
+    if (isStartingRef.current || isListening) {
+      return;
     }
+
+    // Stop any existing recognition first
+    try {
+      recognitionRef.current.stop();
+    } catch (e) {
+      // Ignore errors when stopping
+    }
+
+    // Wait a bit before starting to ensure previous instance is fully stopped
+    setTimeout(() => {
+      if (!recognitionRef.current || isStartingRef.current) {
+        return;
+      }
+
+      setTranscript("");
+      setError(null); // Clear any previous errors
+      isStartingRef.current = true;
+      setIsListening(true);
+      
+      try {
+        recognitionRef.current.start();
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        const isAborted = errorMessage.toLowerCase().includes("aborted");
+        
+        if (isAborted) {
+          // "aborted" errors are common when restarting quickly - don't show as error
+          // Try again after a short delay
+          setTimeout(() => {
+            if (recognitionRef.current && !isStartingRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch (retryErr) {
+                const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+                if (!retryMessage.toLowerCase().includes("aborted")) {
+                  console.error("Retry failed:", retryErr);
+                  setError("Failed to start speech recognition");
+                  setIsListening(false);
+                  isStartingRef.current = false;
+                } else {
+                  // Still aborted on retry - just reset silently
+                  setIsListening(false);
+                  isStartingRef.current = false;
+                  setError(null);
+                }
+              }
+            }
+          }, 100);
+        } else {
+          console.error("Failed to start speech recognition:", err);
+          setError("Failed to start speech recognition");
+          setIsListening(false);
+          isStartingRef.current = false;
+        }
+      }
+    }, 50);
   };
 
   const stopListening = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        // Ignore errors when stopping
+      }
     }
     setIsListening(false);
+    isStartingRef.current = false;
   };
 
   const clearTranscript = () => {
@@ -134,7 +217,7 @@ export function useSpeechRecognition() {
     startListening,
     stopListening,
     clearTranscript,
-    isSupported: recognitionRef.current !== null,
+    isSupported,
   };
 }
 

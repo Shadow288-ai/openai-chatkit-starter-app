@@ -1,24 +1,90 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 
 interface VoiceInputButtonProps {
   onTranscriptUpdate: (transcript: string) => void;
+  containerRef?: React.RefObject<HTMLDivElement>;
 }
 
-export function VoiceInputButton({ onTranscriptUpdate }: VoiceInputButtonProps) {
+export function VoiceInputButton({ onTranscriptUpdate, containerRef }: VoiceInputButtonProps) {
   const { isListening, transcript, error, startListening, stopListening, isSupported } =
     useSpeechRecognition();
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const [buttonPosition, setButtonPosition] = useState<{ right: number; bottom: number } | null>(null);
 
   const lastTranscriptRef = useRef("");
+
+  // Find the ck-wrapper div and position the button at its bottom right
+  useEffect(() => {
+    if (!containerRef?.current) return;
+
+    const findWrapperAndPositionButton = () => {
+      // Find the ck-wrapper element
+      let ckWrapper: HTMLElement | null = null;
+      
+      // Try to find in the container
+      ckWrapper = containerRef.current?.querySelector(".ck-wrapper") as HTMLElement | null;
+      
+      // If not found, try in shadow DOM
+      if (!ckWrapper) {
+        const chatKitElement = containerRef.current?.querySelector("openai-chatkit");
+        if (chatKitElement?.shadowRoot) {
+          ckWrapper = chatKitElement.shadowRoot.querySelector(".ck-wrapper") as HTMLElement | null;
+        }
+      }
+
+      if (ckWrapper && buttonRef.current && containerRef.current) {
+        const wrapperRect = ckWrapper.getBoundingClientRect();
+        const containerRect = containerRef.current.getBoundingClientRect();
+        
+        // Position button at bottom right of ck-wrapper, relative to container
+        // Adjusted: 160px to the left, 20px up
+        const right = containerRect.right - wrapperRect.right + 190; // 172px from right edge (160px left + 12px)
+        const bottom = containerRect.bottom - wrapperRect.bottom + 32; // 32px from bottom (20px up + 12px)
+        
+        setButtonPosition({ right, bottom });
+      }
+    };
+
+    // Initial positioning
+    findWrapperAndPositionButton();
+
+    // Re-position on resize or when ChatKit loads
+    const observer = new MutationObserver(findWrapperAndPositionButton);
+    if (containerRef.current) {
+      observer.observe(containerRef.current, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+      });
+    }
+
+    window.addEventListener("resize", findWrapperAndPositionButton);
+    
+    // Check periodically in case ChatKit loads later
+    const interval = setInterval(findWrapperAndPositionButton, 500);
+    
+    // Cleanup after 10 seconds (should be enough for ChatKit to load)
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+    }, 10000);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", findWrapperAndPositionButton);
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [containerRef]);
 
   useEffect(() => {
     if (transcript && transcript !== lastTranscriptRef.current) {
       // Only send new transcript parts (the difference)
       const newPart = transcript.slice(lastTranscriptRef.current.length).trim();
       if (newPart) {
+        console.log("Sending transcript update:", newPart);
         onTranscriptUpdate(newPart);
         lastTranscriptRef.current = transcript;
       }
@@ -35,22 +101,40 @@ export function VoiceInputButton({ onTranscriptUpdate }: VoiceInputButtonProps) 
     }
   };
 
-  if (!isSupported) {
-    return null;
-  }
+  // Show button even if not supported, but with disabled state
+  // Use absolute positioning relative to container, or fallback to fixed
+  const positionStyle = buttonPosition
+    ? { right: `${buttonPosition.right}px`, bottom: `${buttonPosition.bottom}px` }
+    : { right: "210px", bottom: "32px" };
 
   return (
     <>
       <button
         ref={buttonRef}
         onClick={handleClick}
-        className={`absolute right-3 bottom-3 z-50 flex items-center justify-center w-10 h-10 rounded-full transition-all duration-200 ${
-          isListening
+        disabled={!isSupported}
+        style={positionStyle}
+        className={`absolute z-[9999] flex items-center justify-center w-8 h-8 rounded-full transition-all duration-200 shadow-md ${
+          !isSupported
+            ? "bg-gray-300 dark:bg-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-50"
+            : isListening
             ? "bg-red-500 hover:bg-red-600 text-white animate-pulse"
-            : "bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200"
+            : "bg-slate-400 hover:bg-slate-500 dark:bg-slate-600 dark:hover:bg-slate-500 text-white"
         }`}
-        title={isListening ? "Stop recording" : "Start voice input"}
-        aria-label={isListening ? "Stop recording" : "Start voice input"}
+        title={
+          !isSupported
+            ? "Speech recognition not supported in this browser"
+            : isListening
+            ? "Stop recording"
+            : "Start voice input"
+        }
+        aria-label={
+          !isSupported
+            ? "Speech recognition not supported"
+            : isListening
+            ? "Stop recording"
+            : "Start voice input"
+        }
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -60,7 +144,7 @@ export function VoiceInputButton({ onTranscriptUpdate }: VoiceInputButtonProps) 
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          className="w-5 h-5"
+          className="w-4 h-4"
         >
           {isListening ? (
             <>
@@ -76,8 +160,14 @@ export function VoiceInputButton({ onTranscriptUpdate }: VoiceInputButtonProps) 
           )}
         </svg>
       </button>
-      {error && (
-        <div className="absolute right-3 bottom-14 z-50 px-3 py-2 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 text-sm rounded-lg shadow-lg">
+      {error && buttonRef.current && (
+        <div 
+          className="absolute z-[9999] px-2 py-1 bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200 text-xs rounded shadow-lg max-w-xs"
+          style={{
+            right: buttonPosition ? `${buttonPosition.right}px` : "14px",
+            bottom: buttonPosition ? `${buttonPosition.bottom + 40}px` : "52px",
+          }}
+        >
           {error}
         </div>
       )}

@@ -344,75 +344,165 @@ export function ChatKitPanel({
     // The ChatKit component uses a web component, so we need to query for the input
     const chatKitElement = chatKitContainerRef.current.querySelector("openai-chatkit");
     if (!chatKitElement) {
+      if (isDev) {
+        console.warn("ChatKit element not found");
+      }
       return;
     }
 
     // Try to find input in shadow DOM or regular DOM
-    let input: HTMLInputElement | HTMLTextAreaElement | null = null;
+    let input: HTMLInputElement | HTMLTextAreaElement | HTMLElement | null = null;
+
+    // Comprehensive list of selectors to try
+    const selectors = [
+      'textarea',
+      'input[type="text"]',
+      'input[type="search"]',
+      '[contenteditable="true"]',
+      '[role="textbox"]',
+      'textarea[placeholder]',
+      'input[placeholder]',
+      'textarea[aria-label*="message" i]',
+      'textarea[aria-label*="input" i]',
+      'textarea[aria-label*="chat" i]',
+      'input[aria-label*="message" i]',
+      'input[aria-label*="input" i]',
+      'input[aria-label*="chat" i]',
+    ];
 
     // First, try to find in shadow DOM
     if (chatKitElement.shadowRoot) {
-      input = chatKitElement.shadowRoot.querySelector(
-        'textarea[placeholder], input[type="text"], textarea'
-      ) as HTMLTextAreaElement | HTMLInputElement | null;
+      for (const selector of selectors) {
+        input = chatKitElement.shadowRoot.querySelector(selector) as HTMLElement | null;
+        if (input) {
+          if (isDev) {
+            console.log("Found input in shadow DOM:", selector, input);
+          }
+          break;
+        }
+      }
     }
 
     // If not found in shadow DOM, try regular DOM
     if (!input) {
-      input = chatKitElement.querySelector(
-        'textarea[placeholder], input[type="text"], textarea'
-      ) as HTMLTextAreaElement | HTMLInputElement | null;
-    }
-
-    // Also try common selectors for chat input fields
-    if (!input) {
-      const selectors = [
-        'textarea[aria-label*="message" i]',
-        'textarea[aria-label*="input" i]',
-        'textarea[aria-label*="chat" i]',
-        'input[aria-label*="message" i]',
-        'input[aria-label*="input" i]',
-        'input[aria-label*="chat" i]',
-        '[contenteditable="true"]',
-      ];
-
       for (const selector of selectors) {
-        if (chatKitElement.shadowRoot) {
-          input = chatKitElement.shadowRoot.querySelector(selector) as HTMLTextAreaElement | HTMLInputElement | null;
-          if (input) break;
+        input = chatKitElement.querySelector(selector) as HTMLElement | null;
+        if (input) {
+          if (isDev) {
+            console.log("Found input in regular DOM:", selector, input);
+          }
+          break;
         }
-        input = chatKitElement.querySelector(selector) as HTMLTextAreaElement | HTMLInputElement | null;
-        if (input) break;
       }
     }
 
     if (input) {
-      // Get current value and append transcript
-      const currentValue = input.value || input.textContent || "";
-      const newValue = currentValue ? `${currentValue} ${transcript}` : transcript;
-      
-      // Set the value
-      if (input.contentEditable === "true") {
-        input.textContent = newValue;
-      } else {
-        input.value = newValue;
+      // Get current value
+      let currentValue = "";
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+        currentValue = input.value || "";
+      } else if (input.contentEditable === "true") {
+        currentValue = input.textContent || input.innerText || "";
       }
       
-      // Trigger input events to notify ChatKit
-      const inputEvent = new Event("input", { bubbles: true });
-      const changeEvent = new Event("change", { bubbles: true });
+      // Append transcript (add space if there's existing text)
+      const newValue = currentValue.trim() 
+        ? `${currentValue.trim()} ${transcript.trim()}` 
+        : transcript.trim();
       
-      input.dispatchEvent(inputEvent);
-      input.dispatchEvent(changeEvent);
+      // Set the value
+      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+        input.value = newValue;
+      } else if (input.contentEditable === "true") {
+        input.textContent = newValue;
+        input.innerText = newValue;
+      }
+      
+      // Trigger comprehensive input events to notify ChatKit
+      const events = [
+        new Event("input", { bubbles: true, cancelable: true }),
+        new Event("change", { bubbles: true, cancelable: true }),
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: " " }),
+        new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: " " }),
+      ];
+      
+      events.forEach(event => {
+        input?.dispatchEvent(event);
+      });
+
+      // Also try InputEvent for better compatibility
+      if (typeof InputEvent !== "undefined") {
+        const inputEvent = new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertText",
+          data: transcript,
+        });
+        input.dispatchEvent(inputEvent);
+      }
 
       // Focus the input and move cursor to end
       input.focus();
       if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
-        input.setSelectionRange(newValue.length, newValue.length);
+        try {
+          input.setSelectionRange(newValue.length, newValue.length);
+        } catch (e) {
+          // Some inputs don't support setSelectionRange
+        }
+      } else if (input.contentEditable === "true") {
+        // For contenteditable, set cursor to end
+        const range = document.createRange();
+        const selection = window.getSelection();
+        if (selection && input.childNodes.length > 0) {
+          range.selectNodeContents(input);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      }
+      
+      // Fallback: Try typing the text character by character if value didn't update
+      setTimeout(() => {
+        const currentValueAfter = input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement
+          ? input.value
+          : input.contentEditable === "true"
+          ? input.textContent || input.innerText
+          : "";
+        
+        if (!currentValueAfter.includes(transcript.trim())) {
+          if (isDev) {
+            console.log("Value not updated, trying character-by-character input");
+          }
+          // Try typing character by character as a fallback
+          input.focus();
+          for (let i = 0; i < transcript.length; i++) {
+            const char = transcript[i];
+            const keyEvent = new KeyboardEvent("keydown", {
+              bubbles: true,
+              cancelable: true,
+              key: char,
+              code: `Key${char.toUpperCase()}`,
+            });
+            input.dispatchEvent(keyEvent);
+            
+            if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+              input.value = (input.value || "") + char;
+            } else if (input.contentEditable === "true") {
+              input.textContent = (input.textContent || "") + char;
+            }
+            
+            const inputEvent = new Event("input", { bubbles: true });
+            input.dispatchEvent(inputEvent);
+          }
+        }
+      }, 100);
+      
+      if (isDev) {
+        console.log("Transcript inserted:", transcript, "New value:", newValue);
       }
     } else {
       if (isDev) {
-        console.warn("Could not find ChatKit input field");
+        console.warn("Could not find ChatKit input field. Tried selectors:", selectors);
       }
     }
   }, []);
@@ -442,7 +532,10 @@ export function ChatKitPanel({
         }
       />
       {!blockingError && !isInitializingSession && (
-        <VoiceInputButton onTranscriptUpdate={handleTranscriptUpdate} />
+        <VoiceInputButton 
+          onTranscriptUpdate={handleTranscriptUpdate}
+          containerRef={chatKitContainerRef}
+        />
       )}
       <ErrorOverlay
         error={blockingError}
