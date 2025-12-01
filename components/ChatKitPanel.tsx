@@ -11,7 +11,6 @@ import {
   getThemeConfig,
 } from "@/lib/config";
 import { ErrorOverlay } from "./ErrorOverlay";
-import { VoiceInputButton } from "./VoiceInputButton";
 import type { ColorScheme } from "@/hooks/useColorScheme";
 
 export type FactAction = {
@@ -62,7 +61,6 @@ export function ChatKitPanel({
       : "pending"
   );
   const [widgetInstanceKey, setWidgetInstanceKey] = useState(0);
-  const chatKitContainerRef = useRef<HTMLDivElement>(null);
 
   const setErrorState = useCallback((updates: Partial<ErrorState>) => {
     setErrors((current) => ({ ...current, ...updates }));
@@ -335,187 +333,6 @@ export function ChatKitPanel({
   const activeError = errors.session ?? errors.integration;
   const blockingError = errors.script ?? activeError;
 
-  const handleTranscriptUpdate = useCallback((transcript: string) => {
-    if (!isBrowser || !chatKitContainerRef.current || !transcript.trim()) {
-      return;
-    }
-
-    // Find the ChatKit input field
-    // The ChatKit component uses a web component, so we need to query for the input
-    const chatKitElement = chatKitContainerRef.current.querySelector("openai-chatkit");
-    if (!chatKitElement) {
-      if (isDev) {
-        console.warn("ChatKit element not found");
-      }
-      return;
-    }
-
-    // Try to find input in shadow DOM or regular DOM
-    let input: HTMLInputElement | HTMLTextAreaElement | HTMLElement | null = null;
-
-    // Comprehensive list of selectors to try
-    const selectors = [
-      'textarea',
-      'input[type="text"]',
-      'input[type="search"]',
-      '[contenteditable="true"]',
-      '[role="textbox"]',
-      'textarea[placeholder]',
-      'input[placeholder]',
-      'textarea[aria-label*="message" i]',
-      'textarea[aria-label*="input" i]',
-      'textarea[aria-label*="chat" i]',
-      'input[aria-label*="message" i]',
-      'input[aria-label*="input" i]',
-      'input[aria-label*="chat" i]',
-    ];
-
-    // First, try to find in shadow DOM
-    if (chatKitElement.shadowRoot) {
-      for (const selector of selectors) {
-        input = chatKitElement.shadowRoot.querySelector(selector) as HTMLElement | null;
-        if (input) {
-          if (isDev) {
-            console.log("Found input in shadow DOM:", selector, input);
-          }
-          break;
-        }
-      }
-    }
-
-    // If not found in shadow DOM, try regular DOM
-    if (!input) {
-      for (const selector of selectors) {
-        input = chatKitElement.querySelector(selector) as HTMLElement | null;
-        if (input) {
-          if (isDev) {
-            console.log("Found input in regular DOM:", selector, input);
-          }
-          break;
-        }
-      }
-    }
-
-    if (input) {
-      // Get current value
-      let currentValue = "";
-      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-        currentValue = input.value || "";
-      } else if (input.contentEditable === "true") {
-        currentValue = input.textContent || input.innerText || "";
-      }
-      
-      // Check if transcript is already in the input to avoid duplicates
-      const transcriptTrimmed = transcript.trim();
-      if (currentValue.includes(transcriptTrimmed)) {
-        if (isDev) {
-          console.log("Transcript already in input, skipping:", transcriptTrimmed);
-        }
-        return;
-      }
-      
-      // Append transcript (add space if there's existing text)
-      const newValue = currentValue.trim() 
-        ? `${currentValue.trim()} ${transcriptTrimmed}` 
-        : transcriptTrimmed;
-      
-      // Set the value
-      if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-        input.value = newValue;
-      } else if (input.contentEditable === "true") {
-        input.textContent = newValue;
-        input.innerText = newValue;
-      }
-      
-      // Trigger comprehensive input events to notify ChatKit
-      const events = [
-        new Event("input", { bubbles: true, cancelable: true }),
-        new Event("change", { bubbles: true, cancelable: true }),
-        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: " " }),
-        new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: " " }),
-      ];
-      
-      events.forEach(event => {
-        input?.dispatchEvent(event);
-      });
-
-      // Also try InputEvent for better compatibility
-      if (typeof InputEvent !== "undefined") {
-        const inputEvent = new InputEvent("input", {
-          bubbles: true,
-          cancelable: true,
-          inputType: "insertText",
-          data: transcript,
-        });
-        input.dispatchEvent(inputEvent);
-      }
-
-      // Focus the input and move cursor to end
-      input.focus();
-      if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
-        try {
-          input.setSelectionRange(newValue.length, newValue.length);
-        } catch {
-          // Some inputs don't support setSelectionRange
-        }
-      } else if (input.contentEditable === "true") {
-        // For contenteditable, set cursor to end
-        const range = document.createRange();
-        const selection = window.getSelection();
-        if (selection && input.childNodes.length > 0) {
-          range.selectNodeContents(input);
-          range.collapse(false);
-          selection.removeAllRanges();
-          selection.addRange(range);
-        }
-      }
-      
-      // Fallback: Try typing the text character by character if value didn't update
-      setTimeout(() => {
-        const currentValueAfter = input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement
-          ? input.value
-          : input.contentEditable === "true"
-          ? input.textContent || input.innerText
-          : "";
-        
-        if (!currentValueAfter.includes(transcript.trim())) {
-          if (isDev) {
-            console.log("Value not updated, trying character-by-character input");
-          }
-          // Try typing character by character as a fallback
-          input.focus();
-          for (let i = 0; i < transcript.length; i++) {
-            const char = transcript[i];
-            const keyEvent = new KeyboardEvent("keydown", {
-              bubbles: true,
-              cancelable: true,
-              key: char,
-              code: `Key${char.toUpperCase()}`,
-            });
-            input.dispatchEvent(keyEvent);
-            
-            if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-              input.value = (input.value || "") + char;
-            } else if (input.contentEditable === "true") {
-              input.textContent = (input.textContent || "") + char;
-            }
-            
-            const inputEvent = new Event("input", { bubbles: true });
-            input.dispatchEvent(inputEvent);
-          }
-        }
-      }, 100);
-      
-      if (isDev) {
-        console.log("Transcript inserted:", transcript, "New value:", newValue);
-      }
-    } else {
-      if (isDev) {
-        console.warn("Could not find ChatKit input field. Tried selectors:", selectors);
-      }
-    }
-  }, []);
-
   if (isDev) {
     console.debug("[ChatKitPanel] render state", {
       isInitializingSession,
@@ -527,10 +344,7 @@ export function ChatKitPanel({
   }
 
   return (
-    <div
-      ref={chatKitContainerRef}
-      className="relative pb-8 flex h-[90vh] w-full rounded-2xl flex-col overflow-hidden bg-white shadow-sm transition-colors dark:bg-slate-900"
-    >
+    <div className="relative pb-8 flex h-[90vh] w-full rounded-2xl flex-col overflow-hidden bg-white shadow-sm transition-colors dark:bg-slate-900">
       <ChatKit
         key={widgetInstanceKey}
         control={chatkit.control}
@@ -540,12 +354,6 @@ export function ChatKitPanel({
             : "block h-full w-full"
         }
       />
-      {!blockingError && !isInitializingSession && (
-        <VoiceInputButton 
-          onTranscriptUpdate={handleTranscriptUpdate}
-          containerRef={chatKitContainerRef}
-        />
-      )}
       <ErrorOverlay
         error={blockingError}
         fallbackMessage={
